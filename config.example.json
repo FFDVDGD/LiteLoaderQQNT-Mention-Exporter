@@ -1,0 +1,27 @@
+{
+  "enabled": true,
+  "fileEnabled": true,
+  "outputFile": "mentions.jsonl",
+  "includeElements": true,
+  "startupGraceSeconds": 10,
+  "maxRememberedMessages": 10000,
+  "blacklist": [
+    {
+      "pattern": "广告|推广",
+      "flags": "iu"
+    }
+  ],
+  "groupIdBlacklist": [
+    "123456789"
+  ],
+  "onebot": {
+    "enabled": false,
+    "url": "http://127.0.0.1:3000",
+    "headers": {},
+    "timeoutMs": 60000,
+    "timeZone": "Asia/Shanghai",
+    "messageType": "private",
+    "targetId": "123456789",
+    "accessToken": ""
+  }
+}
