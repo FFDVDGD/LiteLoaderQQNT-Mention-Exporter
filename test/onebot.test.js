@@ -87,11 +87,13 @@ test("converts text and cached images into one ordered forward node", (t) => {
   assert.equal(node.data.content[2].data.text, "\n后");
 });
 
-test("prefers a non-NTV2 image URL over a local cache", (t) => {
+test("selects remote, MD5, and local image resources in order", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mention-image-"));
   const imagePath = path.join(directory, "image.jpg");
   fs.writeFileSync(imagePath, "image");
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const encodedImage = `base64://${Buffer.from("image").toString("base64")}`;
+  const ntv2Url = "https://multimedia.nt.qq.com.cn/download?appid=1406&fileid=old";
 
   assert.equal(
     imageResource({
@@ -106,7 +108,7 @@ test("prefers a non-NTV2 image URL over a local cache", (t) => {
   );
   assert.equal(
     imageResource({
-      originImageUrl: "https://multimedia.nt.qq.com.cn/download?appid=1406&fileid=old",
+      originImageUrl: ntv2Url,
       url: "https://example.com/usable-image.jpg",
     }),
     "https://example.com/usable-image.jpg",
@@ -114,12 +116,44 @@ test("prefers a non-NTV2 image URL over a local cache", (t) => {
   assert.equal(
     imageResource({
       originImageUrl: "https://gchat.qpic.cn/path?appid=1407&fileid=old",
-      md5HexStr: "aabbccdd",
+      md5HexStr: "aabbccddaabbccddaabbccddaabbccdd",
     }),
-    "https://gchat.qpic.cn/gchatpic_new/0/0-0-AABBCCDD/0",
+    "https://gchat.qpic.cn/gchatpic_new/0/0-0-AABBCCDDAABBCCDDAABBCCDDAABBCCDD/0",
   );
+  assert.equal(
+    imageResource({ md5HexStr: "aabbccdd", sourcePath: imagePath }),
+    encodedImage,
+  );
+  assert.equal(
+    imageResource({
+      md5HexStr: "not-an-md5",
+      originImageMd5: "0123456789abcdef0123456789abcdef",
+    }),
+    "https://gchat.qpic.cn/gchatpic_new/0/0-0-0123456789ABCDEF0123456789ABCDEF/0",
+  );
+  assert.equal(imageResource({ originImageUrl: ntv2Url, sourcePath: imagePath }), encodedImage);
+  assert.equal(imageResource({ originImageUrl: ntv2Url }), ntv2Url);
   assert.equal(imageResource({ sourcePath: "C:\\QQNT\\cache\\unavailable.jpg" }), "");
   assert.equal(imageResource({ url: "file:///C:/QQNT/cache/image.jpg" }), "");
+});
+
+test("prefers the matching Map or object thumbnail type", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mention-image-"));
+  const fallbackPath = path.join(directory, "fallback.jpg");
+  const preferredPath = path.join(directory, "preferred.jpg");
+  fs.writeFileSync(fallbackPath, "fallback");
+  fs.writeFileSync(preferredPath, "preferred");
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const expected = `base64://${Buffer.from("preferred").toString("base64")}`;
+
+  assert.equal(imageResource({
+    picElementType: 720,
+    thumbPath: new Map([[0, fallbackPath], ["720", preferredPath]]),
+  }), expected);
+  assert.equal(imageResource({
+    picElementType: 720,
+    thumbPath: { 0: fallbackPath, 720: preferredPath },
+  }), expected);
 });
 
 test("sends the summary and forward to explicit private endpoints", async (t) => {

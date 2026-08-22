@@ -23,6 +23,7 @@ test("normalizes missing settings into a complete independent config", () => {
   assert.equal(config.outputFile, "mentions.jsonl");
   assert.equal(config.onebot.url, "http://127.0.0.1:3000");
   assert.equal(config.onebot.headers.Authorization, "123");
+  assert.equal(config.onebot.timeoutMs, 60000);
   assert.deepEqual(config.groupIdBlacklist, []);
   assert.notEqual(config.onebot.headers, normalizeConfig({}).onebot.headers);
 });
