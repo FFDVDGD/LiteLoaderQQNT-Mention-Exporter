@@ -13,6 +13,7 @@ const {
   recordToForwardNode,
   resolveOneBotUrl,
   sendOneBotForward,
+  sendOneBotForwardWithImageFallback,
   sendOneBotMessage,
 } = require("../lib/onebot.js");
 
@@ -87,7 +88,7 @@ test("converts text and cached images into one ordered forward node", (t) => {
   assert.equal(node.data.content[2].data.text, "\n后");
 });
 
-test("selects remote, MD5, and local image resources in order", (t) => {
+test("prefers local image bytes before remote and MD5 resources", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mention-image-"));
   const imagePath = path.join(directory, "image.jpg");
   fs.writeFileSync(imagePath, "image");
@@ -100,6 +101,10 @@ test("selects remote, MD5, and local image resources in order", (t) => {
       sourcePath: imagePath,
       originImageUrl: "https://example.com/image.jpg",
     }),
+    encodedImage,
+  );
+  assert.equal(
+    imageResource({ originImageUrl: "https://example.com/image.jpg" }),
     "https://example.com/image.jpg",
   );
   assert.equal(
@@ -211,4 +216,57 @@ test("sends the summary and forward to explicit private endpoints", async (t) =>
   assert.equal(received[1].body.messages[0].type, "node");
   assert.equal(received[2].body.group_id, "778899");
   assert.equal(received[3].body.messages[0].type, "node");
+});
+
+test("retries image download failures with text placeholders only", async (t) => {
+  const received = [];
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      response.writeHead(200, { "Content-Type": "application/json" });
+      if (received.length === 1) {
+        response.end(JSON.stringify({
+          status: "failed",
+          retcode: 1200,
+          wording: "发送伪造合并转发消息失败: Error: 下载文件失败: Not Found",
+        }));
+      } else if (received.length === 2) {
+        response.end(JSON.stringify({ status: "ok", retcode: 0, data: { message_id: 2 } }));
+      } else {
+        response.end(JSON.stringify({ status: "failed", retcode: 1403, wording: "权限不足" }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const config = { ...privateConfig, url: `http://127.0.0.1:${address.port}` };
+  const messages = [{
+    type: "node",
+    data: {
+      nickname: "发送者",
+      content: [{
+        type: "image",
+        data: { file: "https://example.com/missing.jpg", summary: "[图片]" },
+      }],
+    },
+  }];
+
+  const result = await sendOneBotForwardWithImageFallback(config, messages);
+  assert.equal(result.usedImageFallback, true);
+  assert.equal(received.length, 2);
+  assert.equal(received[0].messages[0].data.content[0].type, "image");
+  assert.deepEqual(received[1].messages[0].data.content[0], {
+    type: "text",
+    data: { text: "[图片]" },
+  });
+
+  await assert.rejects(
+    sendOneBotForwardWithImageFallback(config, messages),
+    /retcode 1403.*权限不足/,
+  );
+  assert.equal(received.length, 3, "unrelated failures must not be retried");
 });

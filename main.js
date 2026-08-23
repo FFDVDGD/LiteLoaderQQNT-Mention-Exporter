@@ -24,7 +24,7 @@ const {
 } = require("./lib/output.js");
 const {
   recordToForwardNode,
-  sendOneBotForward,
+  sendOneBotForwardWithImageFallback,
   sendOneBotMessage,
 } = require("./lib/onebot.js");
 
@@ -134,10 +134,15 @@ function enqueueOneBotContext(context) {
   const messageId = context.mention.message.id || "message";
   oneBotQueue = oneBotQueue
     .then(() => sendOneBotMessage(onebot, summary))
-    .then(() => sendOneBotForward(onebot, nodes))
-    .then(() => output(
-      `sent ${messageId} -> OneBot (${nodes.length} forward nodes${context.timedOut ? ", timeout" : ""})`,
-    ))
+    .then(() => sendOneBotForwardWithImageFallback(onebot, nodes))
+    .then((result) => {
+      if (result.usedImageFallback) {
+        console.warn(`Mention Exporter omitted unavailable images from ${messageId}`);
+      }
+      output(
+        `sent ${messageId} -> OneBot (${nodes.length} forward nodes${context.timedOut ? ", timeout" : ""}${result.usedImageFallback ? ", images omitted" : ""})`,
+      );
+    })
     .catch((error) => {
       console.error(`Mention Exporter failed to send ${messageId} to OneBot:`, error);
     });
