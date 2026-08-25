@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  cardText,
   createMessageRecord,
   findKernelCommand,
   getLiveMessages,
@@ -116,6 +117,33 @@ test("learns the current account identity", () => {
   });
 
   assert.deepEqual(identity, { uid: "u_self", uin: "111" });
+});
+
+test("extracts readable card prompt, title, and description", () => {
+  const arkElement = {
+    bytesData: JSON.stringify({
+      prompt: "[分享] 示例标题",
+      meta: {
+        news: {
+          title: "示例标题",
+          desc: "这是卡片的具体描述",
+          jumpUrl: "https://example.com/ignored",
+        },
+      },
+    }),
+  };
+
+  assert.equal(cardText(arkElement), "[分享] 示例标题\n这是卡片的具体描述");
+  assert.equal(cardText({ bytesData: "not json" }), "[卡片]");
+
+  const record = createMessageRecord(
+    groupMessage(null, { elements: [{ elementType: 10, arkElement }] }),
+    null,
+    "nodeIKernelMsgListener/onRecvMsg",
+    new Date("2026-08-12T00:00:00.000Z"),
+    true,
+  );
+  assert.equal(record.message.text, "[分享] 示例标题\n这是卡片的具体描述");
 });
 
 test("creates a stable JSONL-friendly record", () => {

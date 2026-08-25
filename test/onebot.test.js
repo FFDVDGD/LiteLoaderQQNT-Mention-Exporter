@@ -88,6 +88,27 @@ test("converts text and cached images into one ordered forward node", (t) => {
   assert.equal(node.data.content[2].data.text, "\n后");
 });
 
+test("converts card data into readable forward text", () => {
+  const node = recordToForwardNode({
+    sender: { uin: "654321", nickname: "发送者" },
+    message: {
+      elements: [{
+        arkElement: {
+          bytesData: JSON.stringify({
+            prompt: "[音乐] 示例歌曲",
+            meta: { music: { title: "示例歌曲", singer: "示例歌手" } },
+          }),
+        },
+      }],
+    },
+  });
+
+  assert.deepEqual(node.data.content, [{
+    type: "text",
+    data: { text: "[音乐] 示例歌曲\n示例歌手" },
+  }]);
+});
+
 test("prefers local image bytes before remote and MD5 resources", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mention-image-"));
   const imagePath = path.join(directory, "image.jpg");
