@@ -154,7 +154,7 @@ llqqnt-plugins\data\mention_exporter\config.json
 
 OneBot 返回 HTTP 200 但 `status` 为 `failed` 或 `retcode` 非 0 时，插件仍会将其记为发送失败。
 
-合并转发使用自定义 OneBot 节点。图片优先将本机 QQNT 缓存编码为 `base64://` 后发送，避免远端 NapCat 无法读取本机路径；没有本地缓存时才使用 HTTP(S) 或 MD5 图片地址。如果远端图片已经失效，插件会仅重试合并转发并把图片降级为 `[图片]`，避免整条上下文丢失或重复发送来源摘要。
+合并转发使用自定义 OneBot 节点。图片优先将本机 QQNT 缓存编码为 `base64://`；没有本地缓存时，插件会自行下载 HTTP/CDN 图片并转成 base64，再调用远端 NapCat。下载失败、图片为空或超过 20 MiB 时才降级为图片文字占位，因此不会先让 NapCat 对失效 URL 产生 404。若 NapCat 仍报告图片文件处理失败，插件会仅重试合并转发并降级其中的图片，避免整条上下文丢失或重复发送来源摘要。
 
 ### 黑名单
 

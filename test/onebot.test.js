@@ -140,6 +140,17 @@ test("prefers local image bytes before remote and MD5 resources", (t) => {
   assert.equal(imageResource({ originImageUrl: ntv2Url }), ntv2Url);
   assert.equal(imageResource({ sourcePath: "C:\\QQNT\\cache\\unavailable.jpg" }), "");
   assert.equal(imageResource({ url: "file:///C:/QQNT/cache/image.jpg" }), "");
+
+  const fallbackNode = recordToForwardNode({
+    sender: { uin: "654321", nickname: "发送者" },
+    message: {
+      elements: [{ picElement: { url: "file:///C:/missing.jpg", summary: "[远程图片]" } }],
+    },
+  });
+  assert.deepEqual(fallbackNode.data.content, [{
+    type: "text",
+    data: { text: "[远程图片]" },
+  }]);
 });
 
 test("prefers the matching Map or object thumbnail type", (t) => {
@@ -218,7 +229,61 @@ test("sends the summary and forward to explicit private endpoints", async (t) =>
   assert.equal(received[3].body.messages[0].type, "node");
 });
 
-test("retries image download failures with text placeholders only", async (t) => {
+test("inlines downloadable images and omits missing ones before calling OneBot", async (t) => {
+  const imageRequests = [];
+  const oneBotRequests = [];
+  const server = http.createServer((request, response) => {
+    if (request.method === "GET") {
+      imageRequests.push(request.url);
+      if (request.url === "/image.jpg") {
+        response.writeHead(200, { "Content-Type": "image/jpeg" });
+        response.end("remote-image");
+      } else {
+        response.writeHead(404, { "Content-Type": "text/plain" });
+        response.end("not found");
+      }
+      return;
+    }
+
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      oneBotRequests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", retcode: 0, data: { message_id: 1 } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const config = { ...privateConfig, url: baseUrl };
+  const result = await sendOneBotForwardWithImageFallback(config, [{
+    type: "node",
+    data: {
+      nickname: "发送者",
+      content: [
+        { type: "image", data: { file: `${baseUrl}/image.jpg`, summary: "[图片1]" } },
+        { type: "image", data: { file: `${baseUrl}/missing.jpg`, summary: "[图片2]" } },
+      ],
+    },
+  }]);
+
+  assert.equal(result.usedImageFallback, true);
+  assert.deepEqual(imageRequests.sort(), ["/image.jpg", "/missing.jpg"]);
+  assert.equal(oneBotRequests.length, 1, "NapCat must not receive a URL that already returned 404");
+  assert.equal(
+    oneBotRequests[0].messages[0].data.content[0].data.file,
+    `base64://${Buffer.from("remote-image").toString("base64")}`,
+  );
+  assert.deepEqual(oneBotRequests[0].messages[0].data.content[1], {
+    type: "text",
+    data: { text: "[图片2]" },
+  });
+});
+
+test("retries NapCat image processing failures with text placeholders only", async (t) => {
   const received = [];
   const server = http.createServer((request, response) => {
     const chunks = [];
@@ -250,7 +315,7 @@ test("retries image download failures with text placeholders only", async (t) =>
       nickname: "发送者",
       content: [{
         type: "image",
-        data: { file: "https://example.com/missing.jpg", summary: "[图片]" },
+        data: { file: `base64://${Buffer.from("image").toString("base64")}`, summary: "[图片]" },
       }],
     },
   }];
