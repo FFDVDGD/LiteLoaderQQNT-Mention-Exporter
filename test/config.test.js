@@ -20,6 +20,7 @@ test("normalizes missing settings into a complete independent config", () => {
 
   assert.equal(config.enabled, false);
   assert.equal(config.fileEnabled, true);
+  assert.equal(config.debugLogEnabled, true);
   assert.equal(config.outputFile, "mentions.jsonl");
   assert.equal(config.onebot.url, "http://127.0.0.1:3000");
   assert.equal(config.onebot.headers.Authorization, "123");
@@ -51,6 +52,7 @@ test("accepts settings produced by the GUI", () => {
   const config = assertValidConfig({
     enabled: true,
     fileEnabled: true,
+    debugLogEnabled: false,
     outputFile: "mentions.jsonl",
     includeElements: false,
     startupGraceSeconds: 10,
@@ -70,6 +72,7 @@ test("accepts settings produced by the GUI", () => {
   });
 
   assert.equal(config.blacklist.length, 1);
+  assert.equal(config.debugLogEnabled, false);
   assert.deepEqual(config.groupIdBlacklist, ["123456", "654321"]);
   assert.equal(config.onebot.messageType, "group");
 });

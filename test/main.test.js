@@ -152,6 +152,8 @@ test("hooks live IPC, writes JSONL, and sends adjacent context through OneBot", 
     const outputPath = path.join(temporaryDirectory, "mention_exporter", "mentions.jsonl");
     const lines = fs.readFileSync(outputPath, "utf8").trim().split("\n");
     const record = JSON.parse(lines[0]);
+    const debugPath = path.join(temporaryDirectory, "mention_exporter", "debug.log");
+    const debugEvents = fs.readFileSync(debugPath, "utf8").trim().split("\n").map(JSON.parse);
 
     assert.equal(result, "forwarded");
     assert.equal(forwarded.length, 6);
@@ -159,6 +161,9 @@ test("hooks live IPC, writes JSONL, and sends adjacent context through OneBot", 
     assert.equal(record.group.name, "广告推广群", "group names must not match the message blacklist");
     assert.equal(record.mention.atMe, true);
     assert.equal(record.message.id, "live-message-1");
+    assert.ok(debugEvents.some((entry) => entry.event === "config.applied"));
+    assert.ok(debugEvents.some((entry) => entry.event === "onebot.context_queued"
+      && entry.details.triggerMessageId === "live-message-1"));
     assert.equal(configured[0].slug, "mention_exporter");
     assert.equal(typeof ipcHandlers.get("LiteLoader.mention_exporter.getConfig"), "function");
     assert.equal(typeof ipcHandlers.get("LiteLoader.mention_exporter.saveConfig"), "function");

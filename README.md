@@ -7,6 +7,7 @@
 - 捕获当前账号被 `@` 的消息；
 - 验证免打扰群是否仍通过 QQNT 消息 IPC 投递；
 - 写入 JSONL 文本文件，并可通过 OneBot v11 HTTP API 发送来源摘要和上下文合并转发；
+- 以滚动调试日志记录图片资源选择、源端下载与占位符降级原因；
 - 使用正则表达式过滤消息正文，并可按群 ID 单独过滤来源群。
 
 ## 实现方式
@@ -66,6 +67,14 @@ llqqnt-plugins\data\mention_exporter\mentions.jsonl
 
 JSONL 便于实时追加；即使程序异常退出，已有行通常仍然可读。
 
+默认同时写入结构化滚动调试日志：
+
+```text
+llqqnt-plugins\data\mention_exporter\debug.log
+```
+
+当前文件达到 5 MiB 后依次滚动为 `debug.log.1` 至 `debug.log.3`，最多占用约 20 MiB。日志记录消息/群/发送者 ID、图片本地候选路径、文件大小、URL 主机与 appid、HTTP 结果及具体降级阶段；不会记录消息正文、OneBot Access Token、rkey/fileid 的值或图片 base64 内容。
+
 启用 OneBot 后，每次触发最终输出两条消息。第一条是来源摘要：
 
 ```text
@@ -100,6 +109,7 @@ llqqnt-plugins\data\mention_exporter\config.json
 {
   "enabled": true,
   "fileEnabled": true,
+  "debugLogEnabled": true,
   "outputFile": "mentions.jsonl",
   "includeElements": true,
   "startupGraceSeconds": 10,
@@ -121,6 +131,7 @@ llqqnt-plugins\data\mention_exporter\config.json
 
 - `enabled: false`：停止监控；
 - `fileEnabled: false`：不再写 JSONL，但仍可发送 OneBot 消息；
+- `debugLogEnabled: false`：停止写入滚动调试日志；
 - `outputFile` 可以是插件数据目录下的相对路径，也可以是绝对路径；
 - `includeElements: false` 可减小文件体积；
 - `startupGraceSeconds` 用于避免启动时把历史消息误判为实时消息；
@@ -154,7 +165,7 @@ llqqnt-plugins\data\mention_exporter\config.json
 
 OneBot 返回 HTTP 200 但 `status` 为 `failed` 或 `retcode` 非 0 时，插件仍会将其记为发送失败。
 
-合并转发使用自定义 OneBot 节点。图片优先将本机 QQNT 缓存编码为 `base64://`；没有本地缓存时，插件会自行下载 HTTP/CDN 图片并转成 base64，再调用远端 NapCat。下载失败、图片为空或超过 20 MiB 时才降级为图片文字占位，因此不会先让 NapCat 对失效 URL 产生 404。若 NapCat 仍报告图片文件处理失败，插件会仅重试合并转发并降级其中的图片，避免整条上下文丢失或重复发送来源摘要。
+合并转发使用自定义 OneBot 节点。图片优先将本机 QQNT 缓存编码为 `base64://`；没有本地缓存时，插件会自行下载 HTTP/CDN 图片并转成 base64，再调用远端 NapCat。下载失败、图片为空或超过 20 MiB 时才降级为图片文字占位，因此不会先让 NapCat 对失效 URL 产生 404。若 NapCat 仍报告图片文件处理失败，插件会仅重试合并转发并降级其中的图片，避免整条上下文丢失或重复发送来源摘要。日志按失败位置将降级标记为 `resource_selection`、`source_download` 或 `napcat_retry`。
 
 ### 黑名单
 
@@ -195,6 +206,6 @@ GUI 中第二列是正则标志下拉框，可选择区分大小写、忽略大�
 - 这仍然依赖 QQNT 私有 IPC 名称和消息字段，QQ 更新后可能失效；
 - 是否覆盖免打扰群必须真机测试，不能只凭源码保证；
 - 插件只记录运行期间收到的新消息，不补拉历史记录；
-- JSONL 仍在 QQ 主进程同步追加，目标消息数量通常很少；若后续导出量变大，应改为异步文件队列或数据库；
+- JSONL 与滚动调试日志仍在 QQ 主进程同步追加，目标消息数量通常很少；若后续导出量变大，应改为异步文件队列或数据库；
 - OneBot 只在合并转发的远端图片下载失败时降级图片并重试一次，其他失败只记录错误日志；
 - 使用 QwQNT/LiteLoaderQQNT 本身存在设备下线或账号风控风险，本插件不能消除该基础风险。

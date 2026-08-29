@@ -16,6 +16,7 @@ const {
   assertValidConfig,
   normalizeConfig,
 } = require("./lib/config.js");
+const { RollingDebugLog } = require("./lib/debug-log.js");
 const {
   compileBlacklist,
   formatDateInTimeZone,
@@ -36,6 +37,11 @@ const identity = { uid: "", uin: "" };
 const rememberedMessages = new Set();
 const rememberedQueue = [];
 const dataDirectory = path.join(LiteLoader.path.data, SLUG);
+const debugLogPath = path.join(dataDirectory, "debug.log");
+const rollingDebugLog = new RollingDebugLog(debugLogPath, {
+  maxBytes: 5 * 1024 * 1024,
+  maxBackups: 3,
+});
 const senderContexts = new SenderContextBuffer(enqueueOneBotContext, 120000);
 
 const savedConfig = LiteLoader.api.config.get(SLUG, {});
@@ -43,11 +49,24 @@ let config;
 let blacklist;
 let groupIdBlacklist;
 let outputPath;
+let debugLogFailureReported = false;
 
 let oneBotQueue = Promise.resolve();
 
 function output(...args) {
   console.log("\x1b[36m%s\x1b[0m", "Mention Exporter:", ...args);
+}
+
+function debugLog(event, details = {}, level = "debug") {
+  if (config?.debugLogEnabled === false) return;
+  try {
+    rollingDebugLog.write(level, event, details);
+    debugLogFailureReported = false;
+  } catch (error) {
+    if (debugLogFailureReported) return;
+    debugLogFailureReported = true;
+    console.error("Mention Exporter failed to write its debug log:", error);
+  }
 }
 
 function cloneConfig(value) {
@@ -75,6 +94,15 @@ function applyConfig(value, { persist = false, strict = false } = {}) {
   groupIdBlacklist = new Set(nextConfig.groupIdBlacklist);
   if (!nextConfig.enabled || !nextConfig.onebot.enabled) senderContexts.clear();
   if (persist) LiteLoader.api.config.set(SLUG, config);
+  debugLog("config.applied", {
+    persist,
+    enabled: config.enabled,
+    fileEnabled: config.fileEnabled,
+    debugLogEnabled: config.debugLogEnabled,
+    oneBotEnabled: config.onebot.enabled,
+    oneBotMessageType: config.onebot.messageType,
+    oneBotTimeoutMs: config.onebot.timeoutMs,
+  });
   return cloneConfig(config);
 }
 
@@ -130,20 +158,40 @@ function enqueueOneBotContext(context) {
 
   const onebot = cloneConfig(config.onebot);
   const summary = formatOneBotSummary(context.mention, onebot.timeZone);
-  const nodes = context.records.map(recordToForwardNode);
   const messageId = context.mention.message.id || "message";
+  const debugContext = {
+    triggerMessageId: messageId,
+    groupId,
+    senderId: String(context.mention.sender?.uin || context.mention.sender?.uid || ""),
+    nodeCount: context.records.length,
+    timedOut: context.timedOut,
+  };
+  const nodes = context.records.map((record) => recordToForwardNode(record, debugLog));
+  debugLog("onebot.context_queued", debugContext);
   oneBotQueue = oneBotQueue
     .then(() => sendOneBotMessage(onebot, summary))
-    .then(() => sendOneBotForwardWithImageFallback(onebot, nodes))
+    .then((result) => {
+      debugLog("onebot.summary_sent", { ...debugContext, status: result.status });
+      return sendOneBotForwardWithImageFallback(onebot, nodes, {
+        debug: debugLog,
+        context: debugContext,
+      });
+    })
     .then((result) => {
       if (result.usedImageFallback) {
         console.warn(`Mention Exporter omitted unavailable images from ${messageId}`);
       }
+      debugLog("onebot.forward_sent", {
+        ...debugContext,
+        status: result.status,
+        usedImageFallback: result.usedImageFallback,
+      }, result.usedImageFallback ? "warn" : "debug");
       output(
         `sent ${messageId} -> OneBot (${nodes.length} forward nodes${context.timedOut ? ", timeout" : ""}${result.usedImageFallback ? ", images omitted" : ""})`,
       );
     })
     .catch((error) => {
+      debugLog("onebot.send_failed", { ...debugContext, error }, "error");
       console.error(`Mention Exporter failed to send ${messageId} to OneBot:`, error);
     });
 }
@@ -208,6 +256,11 @@ function inspectIpc(channel, args) {
         writeRecord(recordForFile(record));
         output(`captured ${record.message.id || "message"} -> ${outputPath}`);
       } catch (error) {
+        debugLog("file.write_failed", {
+          messageId: record.message.id || "message",
+          path: outputPath,
+          error,
+        }, "error");
         console.error(`Mention Exporter failed to write ${record.message.id || "message"}:`, error);
       }
     }
@@ -261,6 +314,7 @@ function onBrowserWindowCreated(window) {
     try {
       inspectIpc(channel, args);
     } catch (error) {
+      debugLog("ipc.inspect_failed", { channel, error }, "error");
       console.error("Mention Exporter failed to inspect an IPC message:", error);
     }
     return Reflect.apply(originalSend, this, [channel, ...args]);
@@ -272,9 +326,16 @@ function onBrowserWindowCreated(window) {
 
 function onLogin(uid) {
   identity.uid = String(uid ?? "");
+  debugLog("plugin.login", {
+    uid: identity.uid,
+    fileEnabled: config.fileEnabled,
+    debugLogEnabled: config.debugLogEnabled,
+    oneBotEnabled: config.onebot.enabled,
+  });
   output(
     `logged in as ${identity.uid || "unknown uid"}; ` +
     `file: ${config.fileEnabled !== false ? outputPath : "disabled"}; ` +
+    `debug log: ${config.debugLogEnabled !== false ? debugLogPath : "disabled"}; ` +
     `OneBot: ${config.onebot.enabled && config.onebot.url ? "enabled" : "disabled"}`,
   );
 }

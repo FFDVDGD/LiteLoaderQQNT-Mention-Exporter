@@ -63,10 +63,13 @@ test("converts text and cached images into one ordered forward node", (t) => {
   const imagePath = path.join(directory, "image.jpg");
   fs.writeFileSync(imagePath, "image");
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const debugEvents = [];
 
   const node = recordToForwardNode({
+    group: { uin: "123456" },
     sender: { uin: "654321", nickname: "发送者", memberName: "群名片" },
     message: {
+      id: "message-1",
       text: "前[图片]后",
       elements: [
         { textElement: { content: "前\n" } },
@@ -74,7 +77,7 @@ test("converts text and cached images into one ordered forward node", (t) => {
         { textElement: { content: "\n后" } },
       ],
     },
-  });
+  }, (event, details, level) => debugEvents.push({ event, details, level }));
 
   assert.equal(node.type, "node");
   assert.equal(node.data.user_id, "654321");
@@ -86,6 +89,29 @@ test("converts text and cached images into one ordered forward node", (t) => {
     `base64://${Buffer.from("image").toString("base64")}`,
   );
   assert.equal(node.data.content[2].data.text, "\n后");
+  assert.deepEqual(debugEvents, [{
+    event: "image.resource_selected",
+    level: "debug",
+    details: {
+      messageId: "message-1",
+      groupId: "123456",
+      senderId: "654321",
+      elementIndex: 1,
+      fileName: "",
+      fileSize: "",
+      width: 0,
+      height: 0,
+      picType: null,
+      picSubType: null,
+      md5: "",
+      summary: "[图片]",
+      source: "local_cache",
+      field: "sourcePath",
+      path: imagePath,
+      bytes: 5,
+    },
+  }]);
+  assert.doesNotMatch(JSON.stringify(debugEvents), /base64:\/\//);
 });
 
 test("converts card data into readable forward text", () => {
@@ -162,16 +188,22 @@ test("prefers local image bytes before remote and MD5 resources", (t) => {
   assert.equal(imageResource({ sourcePath: "C:\\QQNT\\cache\\unavailable.jpg" }), "");
   assert.equal(imageResource({ url: "file:///C:/QQNT/cache/image.jpg" }), "");
 
+  const fallbackEvents = [];
   const fallbackNode = recordToForwardNode({
+    group: { uin: "123456" },
     sender: { uin: "654321", nickname: "发送者" },
     message: {
+      id: "missing-image-message",
       elements: [{ picElement: { url: "file:///C:/missing.jpg", summary: "[远程图片]" } }],
     },
-  });
+  }, (event, details, level) => fallbackEvents.push({ event, details, level }));
   assert.deepEqual(fallbackNode.data.content, [{
     type: "text",
     data: { text: "[远程图片]" },
   }]);
+  assert.ok(fallbackEvents.some((entry) => entry.event === "image.downgraded"
+    && entry.details.stage === "resource_selection"
+    && entry.details.messageId === "missing-image-message"));
 });
 
 test("prefers the matching Map or object thumbnail type", (t) => {
@@ -253,6 +285,7 @@ test("sends the summary and forward to explicit private endpoints", async (t) =>
 test("inlines downloadable images and omits missing ones before calling OneBot", async (t) => {
   const imageRequests = [];
   const oneBotRequests = [];
+  const debugEvents = [];
   const server = http.createServer((request, response) => {
     if (request.method === "GET") {
       imageRequests.push(request.url);
@@ -289,7 +322,10 @@ test("inlines downloadable images and omits missing ones before calling OneBot",
         { type: "image", data: { file: `${baseUrl}/missing.jpg`, summary: "[图片2]" } },
       ],
     },
-  }]);
+  }], {
+    debug: (event, details, level) => debugEvents.push({ event, details, level }),
+    context: { triggerMessageId: "message-1" },
+  });
 
   assert.equal(result.usedImageFallback, true);
   assert.deepEqual(imageRequests.sort(), ["/image.jpg", "/missing.jpg"]);
@@ -302,10 +338,17 @@ test("inlines downloadable images and omits missing ones before calling OneBot",
     type: "text",
     data: { text: "[图片2]" },
   });
+  assert.ok(debugEvents.some((entry) => entry.event === "image.download_succeeded"
+    && entry.details.bytes === Buffer.byteLength("remote-image")));
+  assert.ok(debugEvents.some((entry) => entry.event === "image.downgraded"
+    && entry.details.stage === "source_download"
+    && /HTTP 404/.test(entry.details.reason)
+    && entry.details.triggerMessageId === "message-1"));
 });
 
 test("retries NapCat image processing failures with text placeholders only", async (t) => {
   const received = [];
+  const debugEvents = [];
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
@@ -341,7 +384,10 @@ test("retries NapCat image processing failures with text placeholders only", asy
     },
   }];
 
-  const result = await sendOneBotForwardWithImageFallback(config, messages);
+  const result = await sendOneBotForwardWithImageFallback(config, messages, {
+    debug: (event, details, level) => debugEvents.push({ event, details, level }),
+    context: { triggerMessageId: "message-2" },
+  });
   assert.equal(result.usedImageFallback, true);
   assert.equal(received.length, 2);
   assert.equal(received[0].messages[0].data.content[0].type, "image");
@@ -349,6 +395,11 @@ test("retries NapCat image processing failures with text placeholders only", asy
     type: "text",
     data: { text: "[图片]" },
   });
+  assert.ok(debugEvents.some((entry) => entry.event === "image.downgraded"
+    && entry.level === "warn"
+    && entry.details.stage === "napcat_retry"));
+  assert.ok(debugEvents.some((entry) => entry.event === "onebot.forward_retry"
+    && entry.details.replacedImages === 1));
 
   await assert.rejects(
     sendOneBotForwardWithImageFallback(config, messages),

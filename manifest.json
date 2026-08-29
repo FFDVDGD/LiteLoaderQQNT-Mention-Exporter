@@ -5,7 +5,7 @@
   "name": "群聊 @ 消息导出测试",
   "slug": "mention_exporter",
   "description": "被动监控群聊中的 @全体成员 和被 @ 消息，并写入 JSONL 或通过 OneBot 转发上下文",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "authors": [
     {
       "name": "Local",

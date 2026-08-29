@@ -1,6 +1,7 @@
 {
   "enabled": true,
   "fileEnabled": true,
+  "debugLogEnabled": true,
   "outputFile": "mentions.jsonl",
   "includeElements": true,
   "startupGraceSeconds": 10,

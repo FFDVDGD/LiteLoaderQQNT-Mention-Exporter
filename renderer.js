@@ -113,6 +113,13 @@ const SETTINGS_HTML = /* html */ `
           </setting-item>
           <setting-item data-direction="row">
             <div>
+              <setting-text>写入滚动调试日志</setting-text>
+              <setting-text data-type="secondary">记录图片资源选择与降级原因；debug.log 达到 5 MiB 后滚动，保留 3 个备份。</setting-text>
+            </div>
+            <setting-switch id="mentionExporterDebugLogEnabled"></setting-switch>
+          </setting-item>
+          <setting-item data-direction="row">
+            <div>
               <setting-text>输出文件</setting-text>
               <setting-text data-type="secondary">相对路径位于插件数据目录，也支持绝对路径。</setting-text>
             </div>
@@ -369,6 +376,7 @@ function collectConfig(view) {
   return {
     enabled: getSwitch(view.querySelector("#mentionExporterEnabled")),
     fileEnabled: getSwitch(view.querySelector("#mentionExporterFileEnabled")),
+    debugLogEnabled: getSwitch(view.querySelector("#mentionExporterDebugLogEnabled")),
     outputFile: view.querySelector("#mentionExporterOutputFile").value.trim(),
     includeElements: getSwitch(view.querySelector("#mentionExporterIncludeElements")),
     startupGraceSeconds: numberValue(view, "#mentionExporterStartupGrace", "启动宽限时间", 0),
@@ -391,6 +399,7 @@ function collectConfig(view) {
 function fillConfig(view, config) {
   setSwitch(view.querySelector("#mentionExporterEnabled"), config.enabled);
   setSwitch(view.querySelector("#mentionExporterFileEnabled"), config.fileEnabled);
+  setSwitch(view.querySelector("#mentionExporterDebugLogEnabled"), config.debugLogEnabled);
   view.querySelector("#mentionExporterOutputFile").value = config.outputFile;
   setSwitch(view.querySelector("#mentionExporterIncludeElements"), config.includeElements);
   view.querySelector("#mentionExporterStartupGrace").value = config.startupGraceSeconds;
