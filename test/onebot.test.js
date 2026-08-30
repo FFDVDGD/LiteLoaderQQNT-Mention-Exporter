@@ -165,13 +165,17 @@ test("prefers local image bytes before remote and MD5 resources", (t) => {
     }),
     "https://example.com/usable-image.jpg",
   );
+  const candidateEvents = [];
   assert.equal(
     imageResource({
       originImageUrl: "https://gchat.qpic.cn/path?appid=1407&fileid=old",
       md5HexStr: "aabbccddaabbccddaabbccddaabbccdd",
-    }),
+    }, (event, details) => candidateEvents.push({ event, details })),
     "https://gchat.qpic.cn/gchatpic_new/0/0-0-AABBCCDDAABBCCDDAABBCCDDAABBCCDD/0",
   );
+  assert.ok(candidateEvents.some((entry) => entry.event === "image.resource_selected"
+    && entry.details.strategy === "legacy_md5"
+    && entry.details.alternateResources.some((resource) => resource.strategy === "ntv2")));
   assert.equal(
     imageResource({ md5HexStr: "aabbccdd", sourcePath: imagePath }),
     encodedImage,
@@ -344,6 +348,73 @@ test("inlines downloadable images and omits missing ones before calling OneBot",
     && entry.details.stage === "source_download"
     && /HTTP 404/.test(entry.details.reason)
     && entry.details.triggerMessageId === "message-1"));
+});
+
+test("tries an NTv2 image after the preferred remote resource returns 404", async (t) => {
+  const imageRequests = [];
+  const oneBotRequests = [];
+  const debugEvents = [];
+  const server = http.createServer((request, response) => {
+    if (request.method === "GET") {
+      imageRequests.push(request.url);
+      if (request.url.startsWith("/download?")) {
+        response.writeHead(200, { "Content-Type": "image/jpeg" });
+        response.end("ntv2-image");
+      } else {
+        response.writeHead(404, { "Content-Type": "text/plain" });
+        response.end("not found");
+      }
+      return;
+    }
+
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      oneBotRequests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", retcode: 0, data: { message_id: 1 } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const config = { ...privateConfig, url: baseUrl };
+  const node = recordToForwardNode({
+    sender: { uin: "654321", nickname: "发送者" },
+    message: {
+      id: "message-with-alternate",
+      elements: [{
+        picElement: {
+          url: `${baseUrl}/preferred.jpg`,
+          originImageUrl: `${baseUrl}/download?appid=1407&fileid=image&rkey=fresh`,
+          summary: "[图片]",
+        },
+      }],
+    },
+  }, (event, details, level) => debugEvents.push({ event, details, level }));
+
+  const result = await sendOneBotForwardWithImageFallback(config, [node], {
+    debug: (event, details, level) => debugEvents.push({ event, details, level }),
+  });
+
+  assert.equal(result.usedImageFallback, false);
+  assert.deepEqual(imageRequests, [
+    "/preferred.jpg",
+    "/download?appid=1407&fileid=image&rkey=fresh",
+  ]);
+  assert.equal(oneBotRequests.length, 1);
+  assert.equal(
+    oneBotRequests[0].messages[0].data.content[0].data.file,
+    `base64://${Buffer.from("ntv2-image").toString("base64")}`,
+  );
+  assert.ok(debugEvents.some((entry) => entry.event === "image.download_failed"
+    && entry.details.attempt === 1
+    && entry.details.willRetry === true));
+  assert.ok(debugEvents.some((entry) => entry.event === "image.download_succeeded"
+    && entry.details.attempt === 2));
+  assert.ok(!debugEvents.some((entry) => entry.event === "image.downgraded"));
 });
 
 test("retries NapCat image processing failures with text placeholders only", async (t) => {
