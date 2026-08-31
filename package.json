@@ -1,6 +1,6 @@
 {
   "name": "liteloaderqqnt-mention-exporter",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "LiteLoaderQQNT plugin for exporting group mentions and their sender context through OneBot v11",
   "type": "commonjs",

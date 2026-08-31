@@ -417,6 +417,100 @@ test("tries an NTv2 image after the preferred remote resource returns 404", asyn
   assert.ok(!debugEvents.some((entry) => entry.event === "image.downgraded"));
 });
 
+test("refreshes the NTv2 rkey through NapCat after source URLs expire", async (t) => {
+  const imageRequests = [];
+  const oneBotRequests = [];
+  const debugEvents = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    const url = new URL(input);
+    imageRequests.push({ host: url.host, path: url.pathname });
+    if (url.host === "multimedia.nt.qq.com.cn"
+      && url.searchParams.get("rkey") === "fresh-group") {
+      return new Response("refreshed-image", {
+        status: 200,
+        headers: { "Content-Type": "image/jpeg" },
+      });
+    }
+    if (url.pathname.startsWith("/gchatpic_new/")) {
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    }
+    return new Response("bad request", { status: 400, statusText: "Bad Request" });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      oneBotRequests.push({
+        url: request.url,
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      if (request.url === "/get_rkey") {
+        response.end(JSON.stringify({
+          status: "ok",
+          retcode: 0,
+          data: [
+            { type: "private", rkey: "&rkey=fresh-private", created_at: 1, ttl: 3600 },
+            { type: "group", rkey: "&rkey=fresh-group", created_at: 1, ttl: 3600 },
+          ],
+        }));
+      } else {
+        response.end(JSON.stringify({ status: "ok", retcode: 0, data: { message_id: 1 } }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const config = { ...privateConfig, url: `http://127.0.0.1:${address.port}` };
+  const node = recordToForwardNode({
+    sender: { uin: "654321", nickname: "发送者" },
+    message: {
+      id: "message-with-expired-rkey",
+      elements: [{
+        picElement: {
+          originImageUrl: "https://gchat.qpic.cn/download?appid=1407&fileid=image&rkey=stale",
+          md5HexStr: "f9ef504e8520875f8edf87b14015b3b2",
+          summary: "[图片]",
+        },
+      }],
+    },
+  }, (event, details, level) => debugEvents.push({ event, details, level }));
+
+  const result = await sendOneBotForwardWithImageFallback(config, [node], {
+    debug: (event, details, level) => debugEvents.push({ event, details, level }),
+  });
+
+  assert.equal(result.usedImageFallback, false);
+  assert.deepEqual(imageRequests, [
+    { host: "gchat.qpic.cn", path: "/gchatpic_new/0/0-0-F9EF504E8520875F8EDF87B14015B3B2/0" },
+    { host: "gchat.qpic.cn", path: "/download" },
+    { host: "multimedia.nt.qq.com.cn", path: "/download" },
+  ]);
+  assert.deepEqual(oneBotRequests.map((request) => request.url), [
+    "/get_rkey",
+    "/send_private_forward_msg",
+  ]);
+  assert.equal(
+    oneBotRequests[1].body.messages[0].data.content[0].data.file,
+    `base64://${Buffer.from("refreshed-image").toString("base64")}`,
+  );
+  assert.ok(debugEvents.some((entry) => entry.event === "image.download_failed"
+    && entry.details.attempt === 2
+    && entry.details.willRetry === true));
+  assert.ok(debugEvents.some((entry) => entry.event === "image.rkey_refresh_succeeded"));
+  assert.ok(debugEvents.some((entry) => entry.event === "image.download_succeeded"
+    && entry.details.refreshedRkey === true));
+  assert.ok(!debugEvents.some((entry) => entry.event === "image.downgraded"));
+  assert.doesNotMatch(JSON.stringify(debugEvents), /fresh-group|fresh-private|stale/);
+});
+
 test("retries NapCat image processing failures with text placeholders only", async (t) => {
   const received = [];
   const debugEvents = [];
